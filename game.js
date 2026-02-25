@@ -11,10 +11,13 @@ const JUMP_FORCE    = -13;
 const JUMP2_FORCE   = -11;
 const MOVE_SPEED    = 4.5;
 const FRICTION      = 0.82;
-const ATTACK_DURATION = 18;   // frames
-const ATTACK_COOLDOWN = 28;
-const ATTACK_RANGE  = 70;
-const ATTACK_ARC    = Math.PI * 1.1;   // tail sweep is a wide arc
+const ATTACK_WINDUP   = 14;   // windup frames
+const ATTACK_SLASH    = 6;    // slash frames
+const ATTACK_RECOVERY = 16;   // recovery frames
+const ATTACK_DURATION = ATTACK_WINDUP + ATTACK_SLASH + ATTACK_RECOVERY; // 36
+const ATTACK_COOLDOWN = 40;
+const ATTACK_RANGE  = 80;
+const ATTACK_ARC    = Math.PI * 0.8;
 const INVINCIBLE_FRAMES = 50;
 
 // ── Input ───────────────────────────────────────
@@ -311,6 +314,7 @@ class Player {
     this.attackTimer = 0;
     this.attackCooldown = 0;
     this.attackAngle = 0;
+    this.attackPhase = null;  // 'windup' | 'slash' | 'recovery' | null
 
     // health
     this.hp = 3;
@@ -404,30 +408,46 @@ class Player {
       this.vx = 0; this.vy = 0;
     }
 
-    // ── Attack timers ──
+    // ── Attack timers & phase ──
     if (this.attackTimer > 0) this.attackTimer--;
     else this.attacking = false;
     if (this.attackCooldown > 0) this.attackCooldown--;
 
-    // Attack hit detection — origin is the tail base (behind the cat), sweeps forward
-    if (this.attacking && this.attackTimer === ATTACK_DURATION - 4) {
-      const tailOriginX = this.cx() + (this.facingRight ? -14 : 14);
-      const tailOriginY = this.cy() + 10;
-      // attackAngle points forward, arc covers the sweep zone in front
-      enemies.forEach(e => {
-        if (!e.alive) return;
-        const dx = e.cx() - tailOriginX;
-        const dy = e.cy() - tailOriginY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < ATTACK_RANGE + 20) {
-          const angle = Math.atan2(dy, dx);
-          const diff = angleDiff(angle, this.attackAngle);
-          if (Math.abs(diff) < ATTACK_ARC / 2) {
-            e.die();
-            spawnParticles(e.cx(), e.cy(), 10, '#ffee44', 1.2, 0.15, 28);
+    if (this.attacking) {
+      const elapsed = ATTACK_DURATION - this.attackTimer;
+      if      (elapsed < ATTACK_WINDUP)                        this.attackPhase = 'windup';
+      else if (elapsed < ATTACK_WINDUP + ATTACK_SLASH)         this.attackPhase = 'slash';
+      else                                                     this.attackPhase = 'recovery';
+    } else {
+      this.attackPhase = null;
+    }
+
+    // windup: slow the player down (charging stance)
+    if (this.attackPhase === 'windup') {
+      this.vx *= 0.6;
+    }
+
+    // Attack hit detection — fires on the very first slash frame
+    if (this.attacking) {
+      const elapsed = ATTACK_DURATION - this.attackTimer;
+      if (elapsed === ATTACK_WINDUP) {
+        const tailOriginX = this.cx() + (this.facingRight ? -14 : 14);
+        const tailOriginY = this.cy() + 10;
+        enemies.forEach(e => {
+          if (!e.alive) return;
+          const dx = e.cx() - tailOriginX;
+          const dy = e.cy() - tailOriginY;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < ATTACK_RANGE + 20) {
+            const angle = Math.atan2(dy, dx);
+            const diff = angleDiff(angle, this.attackAngle);
+            if (Math.abs(diff) < ATTACK_ARC / 2) {
+              e.die();
+              spawnParticles(e.cx(), e.cy(), 14, '#ffee44', 1.5, 0.15, 32);
+            }
           }
-        }
-      });
+        });
+      }
     }
 
     // ── Invincibility ──
@@ -478,8 +498,20 @@ class Player {
     // flicker when invincible
     if (this.invincible > 0 && Math.floor(this.invincible / 4) % 2 === 0) return;
 
-    const sqX = this.landSquish > 0 ? 1 + this.landSquish * 0.04 : 1;
-    const sqY = this.landSquish > 0 ? 1 - this.landSquish * 0.04 : 1;
+    let sqX = this.landSquish > 0 ? 1 + this.landSquish * 0.04 : 1;
+    let sqY = this.landSquish > 0 ? 1 - this.landSquish * 0.04 : 1;
+
+    // windup crouch: squash body slightly downward
+    if (this.attackPhase === 'windup') {
+      const elapsed = ATTACK_DURATION - this.attackTimer;
+      const wp = elapsed / ATTACK_WINDUP;
+      sqX = 1 + wp * 0.12;
+      sqY = 1 - wp * 0.10;
+    } else if (this.attackPhase === 'slash') {
+      // snap to stretched on slash
+      sqX = 0.88;
+      sqY = 1.12;
+    }
 
     ctx.save();
     ctx.translate(sx, sy);
@@ -487,40 +519,109 @@ class Player {
 
     // ── Tail ──
     const tailBase = { x: -dir * 10, y: 10 };
-    ctx.strokeStyle = '#e8e0f0';
-    ctx.lineWidth = 4;
     ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(tailBase.x, tailBase.y);
 
-    if (this.attacking) {
-      // tail whip: starts behind the cat and sweeps forward
-      // progress 0 = tail at back, progress 1 = tail fully in front
-      const progress = 1 - this.attackTimer / ATTACK_DURATION;
-      // angle goes from behind (-dir side) sweeping over the top to the front (+dir side)
-      // in local space: behind = angle PI (left), front = angle 0 (right) when dir=1
-      const startA = dir > 0 ? Math.PI : 0;
-      const endA   = dir > 0 ? -Math.PI * 0.15 : Math.PI * 1.15;
-      const sweepA = startA + (endA - startA) * progress;
-      const tailLen = 44;
-      const tx = tailBase.x + Math.cos(sweepA) * tailLen;
-      const ty = tailBase.y + Math.sin(sweepA) * tailLen;
+    if (this.attackPhase === 'windup') {
+      // Windup: tail coils tightly behind and above, color shifts white→gold
+      const elapsed = ATTACK_DURATION - this.attackTimer;
+      const wp = elapsed / ATTACK_WINDUP; // 0→1 over windup
+      // tail tip angle: resting position → coiled high behind
+      // resting: behind and drooping; coiled: straight up-behind
+      const restA  = dir > 0 ? Math.PI * 1.15 : -Math.PI * 0.15;
+      const coilA  = dir > 0 ? Math.PI * 0.65 : Math.PI * 0.35;
+      const tipA   = restA + (coilA - restA) * wp;
+      const tailLen = 44 - wp * 10; // tail pulls in slightly
+      const tx = tailBase.x + Math.cos(tipA) * tailLen;
+      const ty = tailBase.y + Math.sin(tipA) * tailLen;
+      // color: white → gold
+      const r = Math.round(232 + (255 - 232) * wp);
+      const g = Math.round(224 + (224 - 224) * wp);
+      const b = Math.round(240 - 138 * wp);
+      ctx.strokeStyle = `rgb(${r},${g},${b})`;
+      ctx.lineWidth = 4 + wp * 2;
+      ctx.beginPath();
+      ctx.moveTo(tailBase.x, tailBase.y);
       ctx.bezierCurveTo(
-        tailBase.x + Math.cos(startA) * 16, tailBase.y + Math.sin(startA) * 16,
-        tailBase.x + Math.cos(sweepA + (dir > 0 ? 0.4 : -0.4)) * 28, tailBase.y + Math.sin(sweepA + (dir > 0 ? 0.4 : -0.4)) * 28,
+        tailBase.x + Math.cos(tipA + (dir > 0 ? 0.5 : -0.5)) * 16,
+        tailBase.y + Math.sin(tipA + (dir > 0 ? 0.5 : -0.5)) * 16,
+        tailBase.x + Math.cos(tipA) * 28,
+        tailBase.y + Math.sin(tipA) * 28,
         tx, ty
       );
-      ctx.strokeStyle = '#ffe066';
-      ctx.lineWidth = 5;
+      ctx.stroke();
+
+      // subtle glow at tail tip during windup
+      ctx.globalAlpha = 0.3 * wp;
+      ctx.fillStyle = '#ffe066';
+      ctx.beginPath();
+      ctx.arc(tx, ty, 5 + wp * 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
+    } else if (this.attackPhase === 'slash') {
+      // Slash: tail whips from coiled position to fully extended forward, easeOut
+      const elapsed = ATTACK_DURATION - this.attackTimer;
+      const sp = (elapsed - ATTACK_WINDUP) / ATTACK_SLASH; // 0→1 over slash
+      const eased = 1 - Math.pow(1 - sp, 3); // easeOutCubic: fast start, slows at end
+      const coilA  = dir > 0 ? Math.PI * 0.65 : Math.PI * 0.35;
+      const finalA = dir > 0 ? -Math.PI * 0.1  : Math.PI * 1.1;
+      const tipA   = coilA + (finalA - coilA) * eased;
+      const tailLen = 34 + eased * 18; // extends as it whips
+      const tx = tailBase.x + Math.cos(tipA) * tailLen;
+      const ty = tailBase.y + Math.sin(tipA) * tailLen;
+
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(tailBase.x, tailBase.y);
+      ctx.bezierCurveTo(
+        tailBase.x + Math.cos(tipA + (dir > 0 ? 0.3 : -0.3)) * 20,
+        tailBase.y + Math.sin(tipA + (dir > 0 ? 0.3 : -0.3)) * 20,
+        tailBase.x + Math.cos(tipA) * 36,
+        tailBase.y + Math.sin(tipA) * 36,
+        tx, ty
+      );
+      ctx.stroke();
+
+    } else if (this.attackPhase === 'recovery') {
+      // Recovery: tail rests at final forward position, fades back to normal
+      const elapsed = ATTACK_DURATION - this.attackTimer;
+      const rp = (elapsed - ATTACK_WINDUP - ATTACK_SLASH) / ATTACK_RECOVERY; // 0→1
+      const finalA = dir > 0 ? -Math.PI * 0.1 : Math.PI * 1.1;
+      const restA  = dir > 0 ? Math.PI * 1.15  : -Math.PI * 0.15;
+      const tipA   = finalA + (restA - finalA) * rp;
+      const tailLen = 52 - rp * 10;
+      const tx = tailBase.x + Math.cos(tipA) * tailLen;
+      const ty = tailBase.y + Math.sin(tipA) * tailLen;
+      // color: gold → white
+      const g2 = Math.round(224 * rp + 224 * (1 - rp));
+      ctx.strokeStyle = `rgba(255, ${g2}, ${Math.round(102 + 138 * rp)}, ${1 - rp * 0.3})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(tailBase.x, tailBase.y);
+      ctx.bezierCurveTo(
+        tailBase.x + Math.cos(tipA + (dir > 0 ? 0.3 : -0.3)) * 18,
+        tailBase.y + Math.sin(tipA + (dir > 0 ? 0.3 : -0.3)) * 18,
+        tailBase.x + Math.cos(tipA) * 32,
+        tailBase.y + Math.sin(tipA) * 32,
+        tx, ty
+      );
+      ctx.stroke();
+
     } else {
+      // Idle tail
+      ctx.strokeStyle = '#e8e0f0';
+      ctx.lineWidth = 4;
       const tailCurve = this.tailAngle;
+      ctx.beginPath();
+      ctx.moveTo(tailBase.x, tailBase.y);
       ctx.bezierCurveTo(
         tailBase.x - dir * 20, tailBase.y + 10,
         tailBase.x - dir * 30 + Math.cos(tailCurve) * 20, tailBase.y - 10 + Math.sin(tailCurve) * 15,
         tailBase.x - dir * 18 + Math.cos(tailCurve) * 30, tailBase.y - 25 + Math.sin(tailCurve) * 20
       );
+      ctx.stroke();
     }
-    ctx.stroke();
 
     // ── Body ──
     const bodyColor = '#d4c8e8';
@@ -590,48 +691,77 @@ class Player {
     ctx.beginPath(); ctx.ellipse(-dir * 7, 14 - legBob, 5, 7, -0.2 * dir, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.ellipse(-dir * 5, 14 + legBob, 5, 7, 0.2 * dir, 0, Math.PI * 2); ctx.fill();
 
-    // ── Tail whip trail effect ──
-    if (this.attacking) {
-      const progress = 1 - this.attackTimer / ATTACK_DURATION;
-      // trail sweeps from behind to front, same as the tail animation
-      // dir=1 (right): arc goes from ~PI down to ~-0.15  (counter-clockwise in canvas = decreasing angle)
-      // dir=-1 (left): arc goes from ~0 up to ~1.15PI
-      const trailStart = dir > 0 ? Math.PI * 0.9  : Math.PI * 0.1;
-      const trailEnd   = dir > 0 ? -Math.PI * 0.1 : Math.PI * 1.1;
-      const currentEnd = trailStart + (trailEnd - trailStart) * progress;
-
+    // ── Attack phase visual effects ──
+    if (this.attackPhase === 'slash') {
+      const elapsed = ATTACK_DURATION - this.attackTimer;
+      const sp     = (elapsed - ATTACK_WINDUP) / ATTACK_SLASH;
+      const eased  = 1 - Math.pow(1 - sp, 3);
+      const coilA  = dir > 0 ? Math.PI * 0.65 : Math.PI * 0.35;
+      const finalA = dir > 0 ? -Math.PI * 0.1  : Math.PI * 1.1;
       const tbx = -dir * 10;
       const tby = 10;
 
+      // full-screen flash on the very first slash frame
+      if (sp === 0 || elapsed === ATTACK_WINDUP) {
+        ctx.globalAlpha = 0.18;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(-sx, -sy, canvas.width, canvas.height);
+        ctx.globalAlpha = 1;
+      }
+
+      // sweep arc trail (coil → current tip)
+      const currentA = coilA + (finalA - coilA) * eased;
       ctx.lineCap = 'round';
-      for (let arc = 0; arc < 4; arc++) {
-        const r = 22 + arc * 11;
-        ctx.globalAlpha = (0.65 - progress * 0.4) * (1 - arc * 0.2);
-        ctx.strokeStyle = arc < 2 ? '#ffe066' : '#ffaacc';
-        ctx.lineWidth = 5 - arc;
+      for (let arc = 0; arc < 5; arc++) {
+        const r = 28 + arc * 10;
+        ctx.globalAlpha = (0.75 - sp * 0.5) * (1 - arc * 0.18);
+        ctx.strokeStyle = arc < 2 ? '#ffffff' : arc < 4 ? '#ffe066' : '#ffaacc';
+        ctx.lineWidth = 6 - arc;
         ctx.beginPath();
-        // draw from trail start to current tip position
         if (dir > 0) {
-          ctx.arc(tbx, tby, r, currentEnd, trailStart); // counter-clockwise not needed; just swap
+          ctx.arc(tbx, tby, r, currentA, coilA);
         } else {
-          ctx.arc(tbx, tby, r, trailStart, currentEnd);
+          ctx.arc(tbx, tby, r, coilA, currentA);
         }
         ctx.stroke();
       }
 
-      // motion lines at the current tail tip
-      ctx.globalAlpha = 0.85 - progress * 0.6;
+      // speed lines at the tail tip
+      ctx.globalAlpha = 0.9 - sp * 0.7;
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 1.5;
-      for (let ml = 0; ml < 4; ml++) {
-        const spread = 0.18;
-        const mlAngle = currentEnd + (ml - 1.5) * spread;
+      for (let ml = 0; ml < 5; ml++) {
+        const mlAngle = currentA + (ml - 2) * 0.12;
         ctx.beginPath();
-        ctx.moveTo(tbx + Math.cos(mlAngle) * 20, tby + Math.sin(mlAngle) * 20);
-        ctx.lineTo(tbx + Math.cos(mlAngle) * (42 + progress * 14), tby + Math.sin(mlAngle) * (42 + progress * 14));
+        ctx.moveTo(tbx + Math.cos(mlAngle) * 22, tby + Math.sin(mlAngle) * 22);
+        ctx.lineTo(tbx + Math.cos(mlAngle) * (50 + (1 - sp) * 18), tby + Math.sin(mlAngle) * (50 + (1 - sp) * 18));
         ctx.stroke();
       }
+      ctx.globalAlpha = 1;
 
+    } else if (this.attackPhase === 'recovery') {
+      // Fading afterimage arc during recovery
+      const elapsed = ATTACK_DURATION - this.attackTimer;
+      const rp     = (elapsed - ATTACK_WINDUP - ATTACK_SLASH) / ATTACK_RECOVERY;
+      const coilA  = dir > 0 ? Math.PI * 0.65 : Math.PI * 0.35;
+      const finalA = dir > 0 ? -Math.PI * 0.1  : Math.PI * 1.1;
+      const tbx = -dir * 10;
+      const tby = 10;
+
+      ctx.lineCap = 'round';
+      for (let arc = 0; arc < 3; arc++) {
+        const r = 28 + arc * 10;
+        ctx.globalAlpha = (0.35 - rp * 0.35) * (1 - arc * 0.3);
+        ctx.strokeStyle = arc === 0 ? '#ffe066' : '#ffaacc';
+        ctx.lineWidth = 4 - arc;
+        ctx.beginPath();
+        if (dir > 0) {
+          ctx.arc(tbx, tby, r, finalA, coilA);
+        } else {
+          ctx.arc(tbx, tby, r, coilA, finalA);
+        }
+        ctx.stroke();
+      }
       ctx.globalAlpha = 1;
     }
 
