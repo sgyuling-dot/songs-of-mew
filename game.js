@@ -14,7 +14,7 @@ const FRICTION      = 0.82;
 const ATTACK_DURATION = 18;   // frames
 const ATTACK_COOLDOWN = 28;
 const ATTACK_RANGE  = 70;
-const ATTACK_ARC    = Math.PI * 0.65;
+const ATTACK_ARC    = Math.PI * 1.1;   // tail sweep is a wide arc
 const INVINCIBLE_FRAMES = 50;
 
 // ── Input ───────────────────────────────────────
@@ -359,6 +359,7 @@ class Player {
       this.attacking = true;
       this.attackTimer = ATTACK_DURATION;
       this.attackCooldown = ATTACK_COOLDOWN;
+      // tail sweeps from behind toward the front — attack lands in front
       this.attackAngle = this.facingRight ? 0 : Math.PI;
       this.earTwitch = 10;
     }
@@ -408,14 +409,17 @@ class Player {
     else this.attacking = false;
     if (this.attackCooldown > 0) this.attackCooldown--;
 
-    // Attack hit detection
+    // Attack hit detection — origin is the tail base (behind the cat), sweeps forward
     if (this.attacking && this.attackTimer === ATTACK_DURATION - 4) {
+      const tailOriginX = this.cx() + (this.facingRight ? -14 : 14);
+      const tailOriginY = this.cy() + 10;
+      // attackAngle points forward, arc covers the sweep zone in front
       enemies.forEach(e => {
         if (!e.alive) return;
-        const dx = e.cx() - this.cx();
-        const dy = e.cy() - this.cy();
+        const dx = e.cx() - tailOriginX;
+        const dy = e.cy() - tailOriginY;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < ATTACK_RANGE + 10) {
+        if (dist < ATTACK_RANGE + 20) {
           const angle = Math.atan2(dy, dx);
           const diff = angleDiff(angle, this.attackAngle);
           if (Math.abs(diff) < ATTACK_ARC / 2) {
@@ -488,12 +492,34 @@ class Player {
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(tailBase.x, tailBase.y);
-    const tailCurve = this.tailAngle;
-    ctx.bezierCurveTo(
-      tailBase.x - dir * 20, tailBase.y + 10,
-      tailBase.x - dir * 30 + Math.cos(tailCurve) * 20, tailBase.y - 10 + Math.sin(tailCurve) * 15,
-      tailBase.x - dir * 18 + Math.cos(tailCurve) * 30, tailBase.y - 25 + Math.sin(tailCurve) * 20
-    );
+
+    if (this.attacking) {
+      // tail whip: starts behind the cat and sweeps forward
+      // progress 0 = tail at back, progress 1 = tail fully in front
+      const progress = 1 - this.attackTimer / ATTACK_DURATION;
+      // angle goes from behind (-dir side) sweeping over the top to the front (+dir side)
+      // in local space: behind = angle PI (left), front = angle 0 (right) when dir=1
+      const startA = dir > 0 ? Math.PI : 0;
+      const endA   = dir > 0 ? -Math.PI * 0.15 : Math.PI * 1.15;
+      const sweepA = startA + (endA - startA) * progress;
+      const tailLen = 44;
+      const tx = tailBase.x + Math.cos(sweepA) * tailLen;
+      const ty = tailBase.y + Math.sin(sweepA) * tailLen;
+      ctx.bezierCurveTo(
+        tailBase.x + Math.cos(startA) * 16, tailBase.y + Math.sin(startA) * 16,
+        tailBase.x + Math.cos(sweepA + (dir > 0 ? 0.4 : -0.4)) * 28, tailBase.y + Math.sin(sweepA + (dir > 0 ? 0.4 : -0.4)) * 28,
+        tx, ty
+      );
+      ctx.strokeStyle = '#ffe066';
+      ctx.lineWidth = 5;
+    } else {
+      const tailCurve = this.tailAngle;
+      ctx.bezierCurveTo(
+        tailBase.x - dir * 20, tailBase.y + 10,
+        tailBase.x - dir * 30 + Math.cos(tailCurve) * 20, tailBase.y - 10 + Math.sin(tailCurve) * 15,
+        tailBase.x - dir * 18 + Math.cos(tailCurve) * 30, tailBase.y - 25 + Math.sin(tailCurve) * 20
+      );
+    }
     ctx.stroke();
 
     // ── Body ──
@@ -564,34 +590,45 @@ class Player {
     ctx.beginPath(); ctx.ellipse(-dir * 7, 14 - legBob, 5, 7, -0.2 * dir, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.ellipse(-dir * 5, 14 + legBob, 5, 7, 0.2 * dir, 0, Math.PI * 2); ctx.fill();
 
-    // ── Attack effect ──
+    // ── Tail whip trail effect ──
     if (this.attacking) {
       const progress = 1 - this.attackTimer / ATTACK_DURATION;
-      const sweepAngle = ATTACK_ARC * progress;
-      const startAngle = this.attackAngle - ATTACK_ARC / 2;
+      // trail sweeps from behind to front, same as the tail animation
+      // dir=1 (right): arc goes from ~PI down to ~-0.15  (counter-clockwise in canvas = decreasing angle)
+      // dir=-1 (left): arc goes from ~0 up to ~1.15PI
+      const trailStart = dir > 0 ? Math.PI * 0.9  : Math.PI * 0.1;
+      const trailEnd   = dir > 0 ? -Math.PI * 0.1 : Math.PI * 1.1;
+      const currentEnd = trailStart + (trailEnd - trailStart) * progress;
 
-      ctx.strokeStyle = `rgba(255, 230, 100, ${0.8 - progress * 0.6})`;
-      ctx.lineWidth = 4 + progress * 3;
+      const tbx = -dir * 10;
+      const tby = 10;
+
       ctx.lineCap = 'round';
-
-      for (let arc = 0; arc < 3; arc++) {
-        const r = 30 + arc * 14;
-        ctx.globalAlpha = (0.7 - progress * 0.5) * (1 - arc * 0.25);
+      for (let arc = 0; arc < 4; arc++) {
+        const r = 22 + arc * 11;
+        ctx.globalAlpha = (0.65 - progress * 0.4) * (1 - arc * 0.2);
+        ctx.strokeStyle = arc < 2 ? '#ffe066' : '#ffaacc';
+        ctx.lineWidth = 5 - arc;
         ctx.beginPath();
-        ctx.arc(dir * 6, -12, r, startAngle, startAngle + sweepAngle);
+        // draw from trail start to current tip position
+        if (dir > 0) {
+          ctx.arc(tbx, tby, r, currentEnd, trailStart); // counter-clockwise not needed; just swap
+        } else {
+          ctx.arc(tbx, tby, r, trailStart, currentEnd);
+        }
         ctx.stroke();
       }
 
-      // claw lines
-      ctx.globalAlpha = 0.9 - progress * 0.7;
+      // motion lines at the current tail tip
+      ctx.globalAlpha = 0.85 - progress * 0.6;
       ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-      for (let cl = 0; cl < 4; cl++) {
-        const clAngle = startAngle + (sweepAngle * cl) / 3;
-        const cr = 25 + progress * 30;
+      ctx.lineWidth = 1.5;
+      for (let ml = 0; ml < 4; ml++) {
+        const spread = 0.18;
+        const mlAngle = currentEnd + (ml - 1.5) * spread;
         ctx.beginPath();
-        ctx.moveTo(dir * 6 + Math.cos(clAngle) * 15, -12 + Math.sin(clAngle) * 15);
-        ctx.lineTo(dir * 6 + Math.cos(clAngle) * cr, -12 + Math.sin(clAngle) * cr);
+        ctx.moveTo(tbx + Math.cos(mlAngle) * 20, tby + Math.sin(mlAngle) * 20);
+        ctx.lineTo(tbx + Math.cos(mlAngle) * (42 + progress * 14), tby + Math.sin(mlAngle) * (42 + progress * 14));
         ctx.stroke();
       }
 
