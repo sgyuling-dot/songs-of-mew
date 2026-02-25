@@ -521,91 +521,80 @@ class Player {
     const tailBase = { x: -dir * 10, y: 10 };
     ctx.lineCap = 'round';
 
+    // Iaijutsu angles (local space, dir=1 means facing right):
+    //   chargeA = tail pulled back low-behind  (~150° = lower-left)
+    //   thrustA = tail thrust forward-upward   (~-30° = upper-right)
+    const chargeA = dir > 0 ? Math.PI * 0.85 : Math.PI * 0.15;  // behind & slightly down
+    const thrustA = dir > 0 ? -Math.PI * 0.18 : Math.PI * 1.18; // forward & slightly up
+
     if (this.attackPhase === 'windup') {
-      // Windup: tail coils tightly behind and above, color shifts white→gold
       const elapsed = ATTACK_DURATION - this.attackTimer;
-      const wp = elapsed / ATTACK_WINDUP; // 0→1 over windup
-      // tail tip angle: resting position → coiled high behind
-      // resting: behind and drooping; coiled: straight up-behind
-      const restA  = dir > 0 ? Math.PI * 1.15 : -Math.PI * 0.15;
-      const coilA  = dir > 0 ? Math.PI * 0.65 : Math.PI * 0.35;
-      const tipA   = restA + (coilA - restA) * wp;
-      const tailLen = 44 - wp * 10; // tail pulls in slightly
+      const wp = elapsed / ATTACK_WINDUP; // 0→1
+      // tail pulls straight back and down as cat crouches
+      const restA  = dir > 0 ? Math.PI * 1.1 : -Math.PI * 0.1;
+      const tipA   = restA + (chargeA - restA) * wp;
+      const tailLen = 46 - wp * 8;
       const tx = tailBase.x + Math.cos(tipA) * tailLen;
       const ty = tailBase.y + Math.sin(tipA) * tailLen;
       // color: white → gold
-      const r = Math.round(232 + (255 - 232) * wp);
-      const g = Math.round(224 + (224 - 224) * wp);
-      const b = Math.round(240 - 138 * wp);
-      ctx.strokeStyle = `rgb(${r},${g},${b})`;
+      const rb = Math.round(240 - 138 * wp);
+      ctx.strokeStyle = `rgb(255, 224, ${rb})`;
       ctx.lineWidth = 4 + wp * 2;
       ctx.beginPath();
       ctx.moveTo(tailBase.x, tailBase.y);
-      ctx.bezierCurveTo(
-        tailBase.x + Math.cos(tipA + (dir > 0 ? 0.5 : -0.5)) * 16,
-        tailBase.y + Math.sin(tipA + (dir > 0 ? 0.5 : -0.5)) * 16,
-        tailBase.x + Math.cos(tipA) * 28,
-        tailBase.y + Math.sin(tipA) * 28,
-        tx, ty
-      );
+      // nearly straight line — tense, coiled
+      ctx.lineTo(tailBase.x + (tx - tailBase.x) * 0.5, tailBase.y + (ty - tailBase.y) * 0.5 + wp * 4);
+      ctx.lineTo(tx, ty);
       ctx.stroke();
 
-      // subtle glow at tail tip during windup
-      ctx.globalAlpha = 0.3 * wp;
+      // glow at tip
+      ctx.globalAlpha = 0.35 * wp;
       ctx.fillStyle = '#ffe066';
       ctx.beginPath();
-      ctx.arc(tx, ty, 5 + wp * 4, 0, Math.PI * 2);
+      ctx.arc(tx, ty, 5 + wp * 5, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
 
     } else if (this.attackPhase === 'slash') {
-      // Slash: tail whips from coiled position to fully extended forward, easeOut
       const elapsed = ATTACK_DURATION - this.attackTimer;
-      const sp = (elapsed - ATTACK_WINDUP) / ATTACK_SLASH; // 0→1 over slash
-      const eased = 1 - Math.pow(1 - sp, 3); // easeOutCubic: fast start, slows at end
-      const coilA  = dir > 0 ? Math.PI * 0.65 : Math.PI * 0.35;
-      const finalA = dir > 0 ? -Math.PI * 0.1  : Math.PI * 1.1;
-      const tipA   = coilA + (finalA - coilA) * eased;
-      const tailLen = 34 + eased * 18; // extends as it whips
+      const sp    = (elapsed - ATTACK_WINDUP) / ATTACK_SLASH; // 0→1
+      // easeOutQuint: extremely fast at start, nearly stopped at end
+      const eased = 1 - Math.pow(1 - sp, 5);
+      const tipA  = chargeA + (thrustA - chargeA) * eased;
+      const tailLen = 38 + eased * 22; // tail extends as it thrusts
       const tx = tailBase.x + Math.cos(tipA) * tailLen;
       const ty = tailBase.y + Math.sin(tipA) * tailLen;
 
+      // tail drawn as a taut straight thrust line
       ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 6;
+      ctx.lineWidth = 6 - eased * 2;
       ctx.beginPath();
       ctx.moveTo(tailBase.x, tailBase.y);
-      ctx.bezierCurveTo(
-        tailBase.x + Math.cos(tipA + (dir > 0 ? 0.3 : -0.3)) * 20,
-        tailBase.y + Math.sin(tipA + (dir > 0 ? 0.3 : -0.3)) * 20,
-        tailBase.x + Math.cos(tipA) * 36,
-        tailBase.y + Math.sin(tipA) * 36,
-        tx, ty
-      );
+      ctx.lineTo(tx, ty);
       ctx.stroke();
 
+      // bright tip flash
+      ctx.globalAlpha = 1 - eased * 0.6;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(tx, ty, 7 - eased * 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+
     } else if (this.attackPhase === 'recovery') {
-      // Recovery: tail rests at final forward position, fades back to normal
       const elapsed = ATTACK_DURATION - this.attackTimer;
       const rp = (elapsed - ATTACK_WINDUP - ATTACK_SLASH) / ATTACK_RECOVERY; // 0→1
-      const finalA = dir > 0 ? -Math.PI * 0.1 : Math.PI * 1.1;
-      const restA  = dir > 0 ? Math.PI * 1.15  : -Math.PI * 0.15;
-      const tipA   = finalA + (restA - finalA) * rp;
-      const tailLen = 52 - rp * 10;
+      // tail slowly droops from thrust angle back toward rest
+      const restA  = dir > 0 ? Math.PI * 1.1 : -Math.PI * 0.1;
+      const tipA   = thrustA + (restA - thrustA) * rp;
+      const tailLen = 60 - rp * 18;
       const tx = tailBase.x + Math.cos(tipA) * tailLen;
       const ty = tailBase.y + Math.sin(tipA) * tailLen;
-      // color: gold → white
-      const g2 = Math.round(224 * rp + 224 * (1 - rp));
-      ctx.strokeStyle = `rgba(255, ${g2}, ${Math.round(102 + 138 * rp)}, ${1 - rp * 0.3})`;
-      ctx.lineWidth = 4;
+      ctx.strokeStyle = `rgba(255, 224, 102, ${1 - rp * 0.7})`;
+      ctx.lineWidth = 4 - rp * 1.5;
       ctx.beginPath();
       ctx.moveTo(tailBase.x, tailBase.y);
-      ctx.bezierCurveTo(
-        tailBase.x + Math.cos(tipA + (dir > 0 ? 0.3 : -0.3)) * 18,
-        tailBase.y + Math.sin(tipA + (dir > 0 ? 0.3 : -0.3)) * 18,
-        tailBase.x + Math.cos(tipA) * 32,
-        tailBase.y + Math.sin(tipA) * 32,
-        tx, ty
-      );
+      ctx.lineTo(tx, ty);
       ctx.stroke();
 
     } else {
@@ -692,76 +681,77 @@ class Player {
     ctx.beginPath(); ctx.ellipse(-dir * 5, 14 + legBob, 5, 7, 0.2 * dir, 0, Math.PI * 2); ctx.fill();
 
     // ── Attack phase visual effects ──
+    // Re-use the same angles defined in the tail drawing section
+    const _chargeA = dir > 0 ? Math.PI * 0.85 : Math.PI * 0.15;
+    const _thrustA = dir > 0 ? -Math.PI * 0.18 : Math.PI * 1.18;
+    const tbx = -dir * 10;
+    const tby = 10;
+
     if (this.attackPhase === 'slash') {
       const elapsed = ATTACK_DURATION - this.attackTimer;
-      const sp     = (elapsed - ATTACK_WINDUP) / ATTACK_SLASH;
-      const eased  = 1 - Math.pow(1 - sp, 3);
-      const coilA  = dir > 0 ? Math.PI * 0.65 : Math.PI * 0.35;
-      const finalA = dir > 0 ? -Math.PI * 0.1  : Math.PI * 1.1;
-      const tbx = -dir * 10;
-      const tby = 10;
+      const sp    = (elapsed - ATTACK_WINDUP) / ATTACK_SLASH;
+      const eased = 1 - Math.pow(1 - sp, 5);
+      const tipA  = _chargeA + (_thrustA - _chargeA) * eased;
+      const tipLen = 60 + eased * 22;
+      const tipX  = tbx + Math.cos(tipA) * tipLen;
+      const tipY  = tby + Math.sin(tipA) * tipLen;
 
-      // full-screen flash on the very first slash frame
-      if (sp === 0 || elapsed === ATTACK_WINDUP) {
-        ctx.globalAlpha = 0.18;
+      // full-screen flash on first slash frame
+      if (elapsed === ATTACK_WINDUP) {
+        ctx.globalAlpha = 0.22;
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(-sx, -sy, canvas.width, canvas.height);
         ctx.globalAlpha = 1;
       }
 
-      // sweep arc trail (coil → current tip)
-      const currentA = coilA + (finalA - coilA) * eased;
+      // main slash beam — thick bright line from tail base to tip
       ctx.lineCap = 'round';
-      for (let arc = 0; arc < 5; arc++) {
-        const r = 28 + arc * 10;
-        ctx.globalAlpha = (0.75 - sp * 0.5) * (1 - arc * 0.18);
-        ctx.strokeStyle = arc < 2 ? '#ffffff' : arc < 4 ? '#ffe066' : '#ffaacc';
-        ctx.lineWidth = 6 - arc;
+      const alpha = 0.9 - sp * 0.6;
+      for (let layer = 0; layer < 4; layer++) {
+        const w = [8, 5, 3, 1.5][layer];
+        const col = ['rgba(255,255,255,', 'rgba(255,240,120,', 'rgba(255,200,80,', 'rgba(255,255,255,'][layer];
+        ctx.globalAlpha = alpha * [1, 0.8, 0.6, 0.4][layer];
+        ctx.strokeStyle = col + '1)';
+        ctx.lineWidth = w;
         ctx.beginPath();
-        if (dir > 0) {
-          ctx.arc(tbx, tby, r, currentA, coilA);
-        } else {
-          ctx.arc(tbx, tby, r, coilA, currentA);
-        }
+        ctx.moveTo(tbx, tby);
+        ctx.lineTo(tipX, tipY);
         ctx.stroke();
       }
 
-      // speed lines at the tail tip
-      ctx.globalAlpha = 0.9 - sp * 0.7;
+      // speed lines parallel to the thrust direction
+      ctx.globalAlpha = (0.7 - sp * 0.6);
       ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.5;
-      for (let ml = 0; ml < 5; ml++) {
-        const mlAngle = currentA + (ml - 2) * 0.12;
+      ctx.lineWidth = 1.2;
+      const perpA = tipA + Math.PI / 2;
+      for (let sl = -2; sl <= 2; sl++) {
+        const ox = Math.cos(perpA) * sl * 6;
+        const oy = Math.sin(perpA) * sl * 6;
+        const startDist = 18 + (1 - eased) * 20;
         ctx.beginPath();
-        ctx.moveTo(tbx + Math.cos(mlAngle) * 22, tby + Math.sin(mlAngle) * 22);
-        ctx.lineTo(tbx + Math.cos(mlAngle) * (50 + (1 - sp) * 18), tby + Math.sin(mlAngle) * (50 + (1 - sp) * 18));
+        ctx.moveTo(tbx + Math.cos(tipA) * startDist + ox, tby + Math.sin(tipA) * startDist + oy);
+        ctx.lineTo(tipX + ox, tipY + oy);
         ctx.stroke();
       }
+
       ctx.globalAlpha = 1;
 
     } else if (this.attackPhase === 'recovery') {
-      // Fading afterimage arc during recovery
       const elapsed = ATTACK_DURATION - this.attackTimer;
-      const rp     = (elapsed - ATTACK_WINDUP - ATTACK_SLASH) / ATTACK_RECOVERY;
-      const coilA  = dir > 0 ? Math.PI * 0.65 : Math.PI * 0.35;
-      const finalA = dir > 0 ? -Math.PI * 0.1  : Math.PI * 1.1;
-      const tbx = -dir * 10;
-      const tby = 10;
+      const rp = (elapsed - ATTACK_WINDUP - ATTACK_SLASH) / ATTACK_RECOVERY;
+      const tipLen = 60;
+      const tipX = tbx + Math.cos(_thrustA) * tipLen;
+      const tipY = tby + Math.sin(_thrustA) * tipLen;
 
+      // fading straight afterimage of the slash beam
       ctx.lineCap = 'round';
-      for (let arc = 0; arc < 3; arc++) {
-        const r = 28 + arc * 10;
-        ctx.globalAlpha = (0.35 - rp * 0.35) * (1 - arc * 0.3);
-        ctx.strokeStyle = arc === 0 ? '#ffe066' : '#ffaacc';
-        ctx.lineWidth = 4 - arc;
-        ctx.beginPath();
-        if (dir > 0) {
-          ctx.arc(tbx, tby, r, finalA, coilA);
-        } else {
-          ctx.arc(tbx, tby, r, coilA, finalA);
-        }
-        ctx.stroke();
-      }
+      ctx.globalAlpha = (1 - rp) * 0.4;
+      ctx.strokeStyle = '#ffe066';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(tbx, tby);
+      ctx.lineTo(tipX, tipY);
+      ctx.stroke();
       ctx.globalAlpha = 1;
     }
 
