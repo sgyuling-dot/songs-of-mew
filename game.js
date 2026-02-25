@@ -185,15 +185,20 @@ class Enemy {
       this.vx *= -1;
     }
 
-    // edge detection: probe ahead, turn back before falling off
-    const probeX = this.x + (this.vx > 0 ? this.w + 4 : -4);
-    const probeY = this.y + this.h + 4;
-    const hasGround = platforms.some(p =>
-      probeX >= p.x && probeX <= p.x + p.w &&
-      probeY >= p.y && probeY <= p.y + p.h + 2
-    );
-    if (!hasGround && this.onGround) {
-      this.vx *= -1;
+    // edge detection: cast a probe point just ahead of the leading foot,
+    // check if any platform top surface exists within a short drop distance
+    if (this.onGround) {
+      const probeX = this.vx > 0 ? this.x + this.w + 2 : this.x - 2;
+      const footY   = this.y + this.h;
+      const hasGround = platforms.some(p =>
+        probeX >= p.x && probeX <= p.x + p.w &&
+        footY >= p.y - 6 && footY <= p.y + p.h
+      );
+      if (!hasGround) {
+        this.vx *= -1;
+        // nudge back so we don't re-trigger immediately
+        this.x += this.vx * 2;
+      }
     }
 
     // platform collision
