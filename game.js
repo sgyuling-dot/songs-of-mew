@@ -185,19 +185,19 @@ class Enemy {
       this.vx *= -1;
     }
 
-    // edge detection: cast a probe point just ahead of the leading foot,
-    // check if any platform top surface exists within a short drop distance
+    // edge detection: check if the leading foot has ground beneath it
     if (this.onGround) {
-      const probeX = this.vx > 0 ? this.x + this.w + 2 : this.x - 2;
-      const footY   = this.y + this.h;
+      // probeX is just inside the leading edge (not outside), so it stays on the platform until the very edge
+      const probeX = this.vx > 0 ? this.x + this.w - 1 : this.x + 1;
+      const footY  = this.y + this.h;
+      // look for a platform whose top surface is right under probeX
       const hasGround = platforms.some(p =>
         probeX >= p.x && probeX <= p.x + p.w &&
-        footY >= p.y - 6 && footY <= p.y + p.h
+        footY >= p.y && footY <= p.y + p.h + 8
       );
       if (!hasGround) {
         this.vx *= -1;
-        // nudge back so we don't re-trigger immediately
-        this.x += this.vx * 2;
+        this.x += this.vx * 3;
       }
     }
 
